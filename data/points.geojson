@@ -1,0 +1,36 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "title": "ჩემი წერტილი #1",
+        "description": "აქ შეგიძლია ჩაწერო მოკლე აღწერა.",
+        "md": "content/sample.md",
+        "link": "https://example.com"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.8,
+          41.72
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "title": "ჩემი წერტილი #2",
+        "description": "მეორე საინტერესო ადგილი.",
+        "md": "content/sample.md"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.0,
+          42.0
+        ]
+      }
+    }
+  ]
+}
