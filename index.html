@@ -4,50 +4,26 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ინტერაქტიური რუკა + Markdown პანელი</title>
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Marked: Markdown → HTML -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- (არასავალდებულო) წაკითხული Markdown-ში ბმულების ახალ ჩანართში გახსნისთვის -->
   <base target="_blank">
   <style>
     :root{
-      --panel-w: 420px;
-      --bg: #0b1220;
-      --card: #111a2b;
-      --acc: #86aefb;
-      --text: #e6eefc;
+      --panel-w: 420px; --bg: #0b1220; --card: #111a2b; --acc: #86aefb; --text: #e6eefc;
     }
-    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif; }
-    #app { height: 100%; width: 100%; display: grid; grid-template-columns: 1fr; }
-    #map { height: 100%; width: 100%; }
-
-    /* ცარჯის პანელი */
-    #panel {
-      position: fixed; top: 0; right: 0; height: 100%; width: var(--panel-w);
-      background: var(--card); border-left: 1px solid #23314f; box-shadow: -8px 0 24px rgba(0,0,0,.35);
-      transform: translateX(100%); transition: transform .28s ease;
-      display: flex; flex-direction: column; z-index: 9999; overflow: hidden;
-    }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
+    #app { height: 100%; display: grid; grid-template-columns: 1fr; }
+    #map { height: 100%; }
+    #panel { position: fixed; top: 0; right: 0; height: 100%; width: var(--panel-w); background: var(--card); border-left: 1px solid #23314f; box-shadow: -8px 0 24px rgba(0,0,0,.35); transform: translateX(100%); transition: transform .28s ease; display: flex; flex-direction: column; z-index: 9999; overflow: hidden; }
     #panel.open { transform: translateX(0); }
     #panel header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #213150; }
     #panel header h3 { margin: 0; font-size: 16px; font-weight: 600; }
     #panel header button { background: transparent; color: var(--text); border: 1px solid #31466d; border-radius: 10px; padding: 6px 10px; cursor: pointer; }
-    #panel header button:hover { background: #1a2741; }
     #panel-body { padding: 14px; overflow: auto; }
-    #panel-body :is(h1,h2,h3) { color: #cbd9ff; }
-    #panel-body pre { background: #0b162c; padding: 10px; border-radius: 10px; overflow: auto; }
-    #panel-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
-
-    .leaflet-container { background: #0a0f1d; }
-    .leaflet-popup-content-wrapper { background: var(--card); color: var(--text); border: 1px solid #31466d; }
-    .leaflet-popup-tip { background: var(--card); border: 1px solid #31466d; }
-
     .btn { display:inline-block; padding: 6px 10px; border: 1px solid #3a5590; color: white; border-radius: 10px; text-decoration: none; cursor: pointer; user-select: none; }
     .btn:hover { background: #1b2b50; }
     .btn-primary { background: #1a2a4e; }
-
     .brand { position: absolute; left: 12px; top: 12px; z-index: 500; background: #0d172b; border: 1px solid #22355f; border-radius: 12px; padding: 8px 10px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
   </style>
 </head>
@@ -56,8 +32,6 @@
     <div id="map"></div>
     <div class="brand">🌍 ჩემი საინტერესო წერტილები</div>
   </div>
-
-  <!-- გვერდითი Markdown პანელი -->
   <aside id="panel" aria-hidden="true">
     <header>
       <h3 id="panel-title">დოკუმენტი</h3>
@@ -70,36 +44,16 @@
       <p style="opacity:.8">აირჩიე რუკაზე წერტილი და დააჭირე <em>“კითხვა”</em> ღილაკს — შესაბამისი Markdown ფაილი ჩაიტვირთება აქ.</p>
     </div>
   </aside>
-
   <script>
-    // ———————————————————————————
-    // რუკა
-    // ———————————————————————————
-    const map = L.map('map', { zoomControl: true }).setView([41.72, 44.78], 7);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
-
-    // ———————————————————————————
-    // დამხმარე: Markdown ჩატვირთვა GitHub Raw/სხვა URL-იდან
-    // ———————————————————————————
+    const map = L.map('map').setView([41.72, 44.78], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
     const panel = document.getElementById('panel');
     const panelTitle = document.getElementById('panel-title');
     const panelBody  = document.getElementById('panel-body');
     const openRawBtn = document.getElementById('open-md-raw');
-    const closeBtn   = document.getElementById('panel-close');
-
-    closeBtn.addEventListener('click', () => panel.classList.remove('open'));
-
+    document.getElementById('panel-close').onclick = () => panel.classList.remove('open');
     async function loadMarkdown({ url, title }) {
-      if (!url) {
-        panelTitle.textContent = title || 'დოკუმენტი';
-        panelBody.innerHTML = '<p style="opacity:.8">ამ ობიექტთან Markdown ბმული მითითებული არაა.</p>';
-        panel.classList.add('open');
-        return;
-      }
+      if (!url) { panelTitle.textContent = title || 'დოკუმენტი'; panelBody.innerHTML = '<p>ბმული არაა</p>'; panel.classList.add('open'); return; }
       try {
         panelTitle.textContent = title || 'დოკუმენტი';
         panelBody.innerHTML = '<p>ჩატვირთვა...</p>';
@@ -108,36 +62,38 @@
         panelBody.innerHTML = marked.parse(text);
         openRawBtn.onclick = () => window.open(url, '_blank');
         panel.classList.add('open');
-      } catch (err) {
-        panelBody.innerHTML = `<p style="color:#ffb3b3">ვერ ჩაიტვირთა Markdown: ${err}</p>`;
-        panel.classList.add('open');
-      }
+      } catch (err) { panelBody.innerHTML = `<p>ვერ ჩაიტვირთა: ${err}</p>`; panel.classList.add('open'); }
     }
-
-    // ———————————————————————————
-    // GeoJSON ჩატვირთვა — ჯერ ვცდილობთ external ფაილს, თუ ვერა — ვარდებით demo მონაცემებზე
-    // ———————————————————————————
-    const externalGeoJsonUrl = 'data/points.geojson'; // შექმენი /data/points.geojson შენს რეპოში
-
-    // Popup HTML გენერატორი
-    function popupHtml(props){
+    function popupHtml(props, latlng){
       const title = props.title || 'უსათაურო ობიექტი';
       const descr = props.description || '';
       const mdUrl = props.md || props.mdPath || '';
-      const btn   = `<button class="btn btn-primary" onclick="loadMarkdown({url: '${mdUrl}', title: '${title.replace(/'/g, "&#39;")}'})">კითხვა</button>`;
-      const more  = props.link ? `<a class="btn" href="${props.link}">ბმული</a>` : '';
-      return `<div style="min-width:220px"><div style="font-weight:700;margin-bottom:6px">${title}</div><div style="opacity:.9;margin-bottom:8px">${descr}</div><div style="display:flex; gap:8px; flex-wrap:wrap">${btn}${more}</div></div>`;
+      const dest = latlng ? `${latlng.lat.toFixed(6)},${latlng.lng.toFixed(6)}` : '';
+      const btnMd = `<button class="btn btn-primary" onclick="loadMarkdown({url: '${mdUrl}', title: '${title.replace(/'/g, "&#39;")}'})">კითხვა</button>`;
+      const btnLink = props.link ? `<a class=\"btn\" href=\"${props.link}\">ბმული</a>` : '';
+      let btnRoute = '';
+      if(dest){
+        const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+        if (/android/i.test(userAgent)) {
+          btnRoute = `<a class=\"btn\" href=\"geo:${dest}\" target=\"_blank\">მარშრუტი ▶</a>`;
+        } else if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) {
+          btnRoute = `<a class=\"btn\" href=\"http://maps.apple.com/?daddr=${dest}\" target=\"_blank\">მარშრუტი ▶</a>`;
+        } else {
+          btnRoute = `<a class=\"btn\" href=\"https://www.google.com/maps/dir/?api=1&destination=${dest}\" target=\"_blank\" rel=\"noopener\">მარშრუტი ▶</a>`;
+        }
+      }
+      return `<div style=\"min-width:220px\"><div style=\"font-weight:700;margin-bottom:6px\">${title}</div><div style=\"opacity:.9;margin-bottom:8px\">${descr}</div><div style=\"display:flex; gap:8px; flex-wrap:wrap\">${btnMd}${btnLink}${btnRoute}</div></div>`;
     }
-
     function addGeoJsonLayer(geojson){
       return L.geoJSON(geojson, {
         pointToLayer: (feature, latlng) => L.marker(latlng),
         onEachFeature: (feature, layer) => {
-          layer.bindPopup(popupHtml(feature.properties || {}));
+          const latlng = layer.getLatLng();
+          layer.bindPopup(popupHtml(feature.properties || {}, latlng));
         }
       }).addTo(map);
     }
-
+    const externalGeoJsonUrl = 'data/points.geojson';
     (async function init(){
       try {
         const res = await fetch(externalGeoJsonUrl, { cache: 'no-cache' });
@@ -145,39 +101,10 @@
         const gj = await res.json();
         addGeoJsonLayer(gj);
       } catch(e){
-        console.warn('External GeoJSON ვერ ჩაიტვირთა, ვხმარობთ demo მონაცემებს');
         addGeoJsonLayer(DEMO_GEOJSON);
       }
     })();
-
-    // ———————————————————————————
-    // Demo მონაცემები — ჩაანაცვლე შენით, ან შექმნი data/points.geojson იგივე სქემით
-    // md ველი მიუთითე RAW GitHub ბმულით, მაგ: https://raw.githubusercontent.com/<user>/<repo>/<branch>/content/tbilisi.md
-    // ———————————————————————————
-    const DEMO_GEOJSON = {
-      "type": "FeatureCollection",
-      "features": [
-        {
-          "type": "Feature",
-          "properties": {
-            "title": "თბილისის ტელეანძა",
-            "description": "საინტერესო ხედები და ქალაქის პანორამა.",
-            "md": "content/sample.md",
-            "link": "https://ka.wikipedia.org/wiki/%E1%83%97%E1%83%94%E1%83%9A%E1%83%94%E1%83%90%E1%83%9C%E1%83%AB%E1%83%90_(%E1%83%97%E1%83%91%E1%83%98%E1%83%9A%E1%83%98%E1%83%A1%E1%83%98)"
-          },
-          "geometry": { "type": "Point", "coordinates": [44.7879, 41.7096] }
-        },
-        {
-          "type": "Feature",
-          "properties": {
-            "title": "ბათუმის ბულვარი",
-            "description": "შავი ზღვის სანაპირო და პალმები.",
-            "md": "content/sample.md"
-          },
-          "geometry": { "type": "Point", "coordinates": [41.6339, 41.6469] }
-        }
-      ]
-    };
+    const DEMO_GEOJSON = {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"title":"თბილისის ტელეანძა","description":"საინტერესო ხედები","md":"https://raw.githubusercontent.com/markdown-it/markdown-it/master/README.md"},"geometry":{"type":"Point","coordinates":[44.7879,41.7096]}},{"type":"Feature","properties":{"title":"ბათუმის ბულვარი","description":"შავი ზღვის სანაპირო","md":"https://raw.githubusercontent.com/adam-p/markdown-here/master/README.md"},"geometry":{"type":"Point","coordinates":[41.6339,41.6469]}}]};
   </script>
 </body>
 </html>
