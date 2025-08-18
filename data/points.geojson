@@ -31,6 +31,7 @@
           42.0
         ]
       }
-    }
-  ]
+    },
+{ "type": "Feature", "properties": { "title": "ჩემი წერტილი #3", "description": "სატესტო წერტილი", "md": "content\/saxelosno.md", "link": "https:\/\/www.google.com\/maps\/@41.7821046,44.7975991,115m\/data=!3m1!1e3?entry=ttu&g_ep=EgoyMDI1MDgxMy4wIKXMDSoASAFQAw%3D%3D" }, "geometry": { "type": "Point", "coordinates": [ 44.797824292452802, 41.782146638024891 ] } }
+]
 }
