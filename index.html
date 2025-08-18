@@ -4,27 +4,63 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ჩემი ავტო რუკა</title>
+
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- MarkerCluster მხოლოდ LPG ფენისთვის -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <!-- Markdown renderer (პანელისთვის) -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
   <base target="_blank">
+
   <style>
-    :root{
-      --panel-w: 420px; --bg: #0b1220; --card: #111a2b; --acc: #86aefb; --text: #e6eefc;
-    }
+    :root{ --panel-w: 420px; --bg:#0b1220; --card:#111a2b; --acc:#86aefb; --text:#e6eefc; }
     html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
     #app { height: 100%; display: grid; grid-template-columns: 1fr; }
     #map { height: 100%; }
-    #panel { position: fixed; top: 0; right: 0; height: 100%; width: var(--panel-w); background: var(--card); border-left: 1px solid #23314f; box-shadow: -8px 0 24px rgba(0,0,0,.35); transform: translateX(100%); transition: transform .28s ease; display: flex; flex-direction: column; z-index: 9999; overflow: hidden; }
+
+    /* Slide panel */
+    #panel { position: fixed; top: 0; right: 0; height: 100%; width: var(--panel-w); background: var(--card);
+             border-left: 1px solid #23314f; box-shadow: -8px 0 24px rgba(0,0,0,.35); transform: translateX(100%);
+             transition: transform .28s ease; display: flex; flex-direction: column; z-index: 9999; overflow: hidden; }
     #panel.open { transform: translateX(0); }
     #panel header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #213150; }
     #panel header h3 { margin: 0; font-size: 16px; font-weight: 600; }
     #panel header button { background: transparent; color: var(--text); border: 1px solid #31466d; border-radius: 10px; padding: 6px 10px; cursor: pointer; }
     #panel-body { padding: 14px; overflow: auto; }
+
     .btn { display:inline-block; padding: 6px 10px; border: 1px solid #3a5590; color: white; border-radius: 10px; text-decoration: none; cursor: pointer; user-select: none; }
     .btn:hover { background: #1b2b50; }
     .btn-primary { background: #1a2a4e; }
-    .brand { position: absolute; left: 12px; top: 12px; z-index: 500; background: #0d172b; border: 1px solid #22355f; border-radius: 12px; padding: 8px 10px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+
+    .brand { position: absolute; left: 50px; top: 12px; z-index: 500; background: #0d172b; border: 1px solid #22355f;
+             border-radius: 12px; padding: 8px 10px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+
+    /* ⛽ LPG marker (DivIcon) */
+    .gas-icon{ font-size: 20px; line-height: 24px; width: 24px; height: 24px; text-align: center; filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); }
+
+    /* ლამაზი კომპაქტური ბრენდ-ფილტრის კონტროლი */
+    .lpg-filter {
+      background: #0d172b; border: 1px solid #243a63; border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.25); color: #e6eefc; min-width: 180px;
+      padding: 8px 10px; font-size: 13px;
+      max-height: 240px; overflow: hidden; display: grid; grid-template-rows: auto 1fr auto;
+    }
+    .lpg-filter h4 { margin: 0 0 6px 0; font-size: 13px; font-weight: 700; }
+    .lpg-filter .actions { display: flex; gap: 8px; margin: 6px 0 8px; }
+    .lpg-filter .actions button {
+      border: 1px solid #325084; background: #132343; color: #e6eefc; border-radius: 8px; padding: 4px 8px; cursor: pointer;
+    }
+    .lpg-filter .list { overflow: auto; max-height: 170px; padding-right: 4px; }
+    .lpg-filter label { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+    .lpg-filter small { opacity: .75; }
+    .leaflet-control { filter: drop-shadow(0 1px 2px rgba(0,0,0,.25)); }
   </style>
 </head>
 <body>
@@ -32,6 +68,8 @@
     <div id="map"></div>
     <div class="brand">🌍 ავტო რუკა</div>
   </div>
+
+  <!-- Slide panel -->
   <aside id="panel" aria-hidden="true">
     <header>
       <h3 id="panel-title">დოკუმენტი</h3>
@@ -44,14 +82,31 @@
       <p style="opacity:.8">აირჩიე რუკაზე წერტილი და დააჭირე <em>“კითხვა”</em> ღილაკს — შესაბამისი Markdown ფაილი ჩაიტვირთება აქ.</p>
     </div>
   </aside>
+
   <script>
-    const map = L.map('map').setView([41.72, 44.78], 7);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-    const panel = document.getElementById('panel');
+    // --- Base layers
+    const osm     = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+    const osmHot  = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19 });
+    const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+
+    const map = L.map('map', { center: [41.72, 44.78], zoom: 7, layers: [osm] });
+
+    const baseLayers = {
+      'OpenStreetMap': osm,
+      'OSM Humanitarian': osmHot,
+      'Esri Satellite': esriSat
+    };
+
+    // Layer Control: collapsed: true ✅
+    const layerControl = L.control.layers(baseLayers, {}, { collapsed: true }).addTo(map);
+
+    // --- Slide panel helpers ---
+    const panel      = document.getElementById('panel');
     const panelTitle = document.getElementById('panel-title');
     const panelBody  = document.getElementById('panel-body');
     const openRawBtn = document.getElementById('open-md-raw');
     document.getElementById('panel-close').onclick = () => panel.classList.remove('open');
+
     async function loadMarkdown({ url, title }) {
       if (!url) { panelTitle.textContent = title || 'დოკუმენტი'; panelBody.innerHTML = '<p>ბმული არაა</p>'; panel.classList.add('open'); return; }
       try {
@@ -64,47 +119,197 @@
         panel.classList.add('open');
       } catch (err) { panelBody.innerHTML = `<p>ვერ ჩაიტვირთა: ${err}</p>`; panel.classList.add('open'); }
     }
+
     function popupHtml(props, latlng){
-      const title = props.title || 'უსათაურო ობიექტი';
-      const descr = props.description || '';
-      const mdUrl = props.md || props.mdPath || '';
-      const dest = latlng ? `${latlng.lat.toFixed(6)},${latlng.lng.toFixed(6)}` : '';
-      const btnMd = `<button class="btn btn-primary" onclick="loadMarkdown({url: '${mdUrl}', title: '${title.replace(/'/g, "&#39;")}'})">კითხვა</button>`;
-      const btnLink = props.link ? `<a class=\"btn\" href=\"${props.link}\">ბმული</a>` : '';
+      const p = props || {};
+      const title = p.title || p.name || p.station || p.Name || 'უსათაურო ობიექტი';
+      const descr = p.description || p.desc || p.address || '';
+      const mdUrl = p.md || p.mdPath || '';
+      const dest  = latlng ? `${latlng.lat.toFixed(6)},${latlng.lng.toFixed(6)}` : '';
+
+      const btnMd   = `<button class="btn btn-primary" onclick="loadMarkdown({url: '${mdUrl}', title: '${(title+'').replace(/'/g, '&#39;')}'})">კითხვა</button>`;
+      const btnLink = p.link ? `<a class="btn" href="${p.link}">ბმული</a>` : '';
+
       let btnRoute = '';
       if(dest){
-        const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-        if (/android/i.test(userAgent)) {
-          btnRoute = `<a class=\"btn\" href=\"geo:${dest}\" target=\"_blank\">მარშრუტი ▶</a>`;
-        } else if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) {
-          btnRoute = `<a class=\"btn\" href=\"http://maps.apple.com/?daddr=${dest}\" target=\"_blank\">მარშრუტი ▶</a>`;
+        const ua = navigator.userAgent || navigator.vendor || window.opera;
+        if (/android/i.test(ua)) {
+          btnRoute = `<a class="btn" href="geo:${dest}" target="_blank">მარშრუტი ▶</a>`;
+        } else if (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) {
+          btnRoute = `<a class="btn" href="http://maps.apple.com/?daddr=${dest}" target="_blank">მარშრუტი ▶</a>`;
         } else {
-          btnRoute = `<a class=\"btn\" href=\"https://www.google.com/maps/dir/?api=1&destination=${dest}\" target=\"_blank\" rel=\"noopener\">მარშრუტი ▶</a>`;
+          btnRoute = `<a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${dest}" target="_blank" rel="noopener">მარშრუტი ▶</a>`;
         }
       }
-      return `<div style=\"min-width:220px\"><div style=\"font-weight:700;margin-bottom:6px\">${title}</div><div style=\"opacity:.9;margin-bottom:8px\">${descr}</div><div style=\"display:flex; gap:8px; flex-wrap:wrap\">${btnMd}${btnLink}${btnRoute}</div></div>`;
+
+      return `<div style="min-width:220px">
+        <div style="font-weight:700;margin-bottom:6px">${title}</div>
+        <div style="opacity:.9;margin-bottom:8px">${descr}</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">${btnMd}${btnLink}${btnRoute}</div>
+      </div>`;
     }
-    function addGeoJsonLayer(geojson){
-      return L.geoJSON(geojson, {
-        pointToLayer: (feature, latlng) => L.marker(latlng),
-        onEachFeature: (feature, layer) => {
-          const latlng = layer.getLatLng();
-          layer.bindPopup(popupHtml(feature.properties || {}, latlng));
+
+    // ჩვეულებრივი points.geojson როგორც მარტივი მარკერები
+    function addGeoJsonLayer(geojson, opts = {}){
+      const layer = L.geoJSON(geojson, {
+        pointToLayer: (feature, latlng) => opts.icon ? L.marker(latlng, { icon: opts.icon }) : L.marker(latlng),
+        onEachFeature: (feature, lyr) => {
+          const latlng = lyr.getLatLng();
+          lyr.bindPopup(popupHtml(feature.properties || {}, latlng));
         }
-      }).addTo(map);
+      });
+      if (opts.addToMap !== false) layer.addTo(map);
+      return layer;
     }
-    const externalGeoJsonUrl = 'data/points.geojson';
+
+    // LPG — MarkerCluster (ერთი ოვერლეი), ბრენდ-ფილტრებით
+    const gasIcon = L.divIcon({ className: 'gas-icon', html: '⛽', iconSize: [24,24], iconAnchor: [12,12] });
+
+    function detectBrand(name) {
+      if (!name) return 'OTHER';
+      const raw = String(name);
+      const m = raw.match(/LPG\s*[–—-]\s*([^|,;/\\]+)\s*$/i);
+      if (m && m[1]) return m[1].trim().toUpperCase();
+      const s = raw.toUpperCase().replace(/\s+/g, '');
+      if (s.includes('AUTOLPGAS')) return 'AUTOLPGAS';
+      if (s.includes('NEOGAS'))    return 'NEOGAS';
+      if (s.includes('URIDGAS'))   return 'URIDGAS';
+      return 'OTHER';
+    }
+
+    function buildLpgBrandData(geojson) {
+      const clustersByBrand = {};      // brand -> MarkerClusterGroup
+      const countsByBrand   = {};      // brand -> count
+      const brands          = new Set();
+
+      function clusterFor(brand){
+        if (!clustersByBrand[brand]) {
+          clustersByBrand[brand] = L.markerClusterGroup({ disableClusteringAtZoom: 15 });
+          countsByBrand[brand] = 0;
+        }
+        return clustersByBrand[brand];
+      }
+
+      (geojson.features || []).forEach(f => {
+        if (!f?.geometry || f.geometry.type !== 'Point') return;
+        const c = f.geometry.coordinates; if (!Array.isArray(c) || c.length < 2) return;
+
+        const brand = 'LPG - ' + detectBrand(f.properties?.Name || f.properties?.name || f.properties?.title);
+        brands.add(brand);
+
+        const latlng = L.latLng(c[1], c[0]);
+        const marker = L.marker(latlng, { icon: gasIcon });
+        marker.bindPopup(popupHtml(f.properties || {}, latlng));
+        clusterFor(brand).addLayer(marker);
+        countsByBrand[brand] += 1;
+      });
+
+      return { clustersByBrand, countsByBrand, brandList: Array.from(brands).sort() };
+    }
+
+    // URLs
+    const mainUrl = 'data/points.geojson';  // უბრალო მარკერები
+    const lpgUrl  = 'data/LPG.geojson';     // MarkerCluster + ბრენდები
+
+    // LPG master overlay: ერთ ოვერლეად ემატება კონტროლში
+    const lpgMaster = L.layerGroup().addTo(map);
+    layerControl.addOverlay(lpgMaster, '⛽ LPG');
+
+    // პატარა ბრენდ-ფილტრების კონტროლი
+    const LpgFilterControl = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd: function() {
+        const div = L.DomUtil.create('div', 'lpg-filter');
+        div.innerHTML = `
+          <h4>⛽ LPG ბრენდები</h4>
+          <div class="actions">
+            <button type="button" id="lpgAll">ყველა</button>
+            <button type="button" id="lpgNone">არცერთი</button>
+          </div>
+          <div class="list" id="lpgList"></div>
+        `;
+        L.DomEvent.disableClickPropagation(div);
+        this._container = div;
+        return div;
+      },
+      setBrands: function(brandList, countsByBrand, onChange) {
+        const list = this._container.querySelector('#lpgList');
+        list.innerHTML = '';
+        brandList.forEach(b => {
+          const id = 'b_' + b.replace(/\W+/g, '_');
+          const count = countsByBrand[b] || 0;
+          const row = document.createElement('label');
+          row.innerHTML = `
+            <input type="checkbox" id="${id}" data-brand="${b}" checked />
+            <span>${b} <small>(${count})</small></span>
+          `;
+          list.appendChild(row);
+        });
+        // Handlers
+        list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.addEventListener('change', () => onChange(this.selectedBrands()));
+        });
+        this._container.querySelector('#lpgAll').onclick  = () => {
+          list.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+          onChange(this.selectedBrands());
+        };
+        this._container.querySelector('#lpgNone').onclick = () => {
+          list.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+          onChange(this.selectedBrands());
+        };
+      },
+      selectedBrands: function() {
+        return Array.from(this._container.querySelectorAll('input[type="checkbox"]:checked'))
+          .map(cb => cb.getAttribute('data-brand'));
+      },
+      show: function() { this._container.style.display = ''; },
+      hide: function() { this._container.style.display = 'none'; }
+    });
+
+    const lpgFilter = new LpgFilterControl();
+    map.addControl(lpgFilter);
+
+    // Overlay toggle-სთან სინქრონი (თუ მომხმარებელმა "⛽ LPG" გამორთო, ფილტრი დაიმალოს)
+    map.on('overlayadd',  e => { if (e.layer === lpgMaster) lpgFilter.show(); });
+    map.on('overlayremove', e => { if (e.layer === lpgMaster) lpgFilter.hide(); });
+
     (async function init(){
+      // main points (NO cluster)
       try {
-        const res = await fetch(externalGeoJsonUrl, { cache: 'no-cache' });
+        const res = await fetch(mainUrl, { cache: 'no-cache' });
         if (!res.ok) throw new Error('no external geojson');
         const gj = await res.json();
-        addGeoJsonLayer(gj);
+        const mainLayer = addGeoJsonLayer(gj);
+        layerControl.addOverlay(mainLayer, 'ობიექტები (points.geojson)');
       } catch(e){
-        addGeoJsonLayer(DEMO_GEOJSON);
+        console.warn('points.geojson ვერ ჩაიტვირთა:', e);
+      }
+
+      // LPG (WITH cluster & brand filter)
+      try {
+        const res = await fetch(lpgUrl, { cache: 'no-cache' });
+        if (!res.ok) throw new Error('no LPG layer');
+        const lpgGJ = await res.json();
+
+        const { clustersByBrand, countsByBrand, brandList } = buildLpgBrandData(lpgGJ);
+
+        // ფილტრის UI გამოვიტანოთ
+        lpgFilter.setBrands(brandList, countsByBrand, (selected) => {
+          // გამორთე ყველაფერი…
+          lpgMaster.clearLayers();
+          // …და ჩართე მონიშნულები
+          selected.forEach(b => lpgMaster.addLayer(clustersByBrand[b]));
+        });
+
+        // ნაგულისხმევად: ყველა ბრენდი ჩართულია
+        brandList.forEach(b => lpgMaster.addLayer(clustersByBrand[b]));
+        lpgFilter.show();
+
+      } catch (e) {
+        console.warn('LPG.geojson ვერ ჩაიტვირთა:', e);
+        lpgFilter.hide();
       }
     })();
-    const DEMO_GEOJSON = {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"title":"თბილისის ტელეანძა","description":"საინტერესო ხედები","md":"https://raw.githubusercontent.com/markdown-it/markdown-it/master/README.md"},"geometry":{"type":"Point","coordinates":[44.7879,41.7096]}},{"type":"Feature","properties":{"title":"ბათუმის ბულვარი","description":"შავი ზღვის სანაპირო","md":"https://raw.githubusercontent.com/adam-p/markdown-here/master/README.md"},"geometry":{"type":"Point","coordinates":[41.6339,41.6469]}}]};
   </script>
 </body>
 </html>
