@@ -53,9 +53,13 @@
       background: #0d172b; border: 1px solid #243a63; border-radius: 12px;
       box-shadow: 0 6px 18px rgba(0,0,0,.25); color: #e6eefc; min-width: 180px;
       padding: 8px 10px; font-size: 13px;
-      max-height: 240px; overflow: hidden; display: grid; grid-template-rows: auto 1fr auto;
+      max-height: 260px; overflow: hidden; display: grid; grid-template-rows: auto auto 1fr auto;
     }
-    .lpg-filter h4 { margin: 0 0 6px 0; font-size: 13px; font-weight: 700; }
+    .lpg-filter .head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+    .lpg-filter .head h4 { margin: 0; font-size: 13px; font-weight: 700; }
+    .lpg-filter .head .hide-btn{
+      border: 1px solid #325084; background: #132343; color: #e6eefc; border-radius: 8px; padding: 2px 8px; cursor: pointer; font-size:12px;
+    }
     .lpg-filter .actions { display: flex; gap: 8px; margin: 6px 0 8px; }
     .lpg-filter .actions button {
       border: 1px solid #325084; background: #132343; color: #e6eefc; border-radius: 8px; padding: 4px 8px; cursor: pointer;
@@ -279,14 +283,17 @@
     const lpgMaster = L.layerGroup();
     layerControl.addOverlay(lpgMaster, '⛽ LPG');
 
-    // ბრენდ-ფილტრის კონტროლი (Top Right)
+    // ----------------------- LPG FILTER CONTROL + TOGGLE -----------------------
     const LpgFilterControl = L.Control.extend({
       options: { position: 'topright' },
       onAdd: function() {
         const div = L.DomUtil.create('div', 'lpg-filter');
         div.style.display = 'none';
         div.innerHTML = `
-          <h4>⛽ LPG ბრენდები</h4>
+          <div class="head">
+            <h4>⛽ LPG ბრენდები</h4>
+            <button type="button" id="lpgHide" class="hide-btn" title="დამალვა">დამალვა</button>
+          </div>
           <div class="actions">
             <button type="button" id="lpgAll">ყველა</button>
             <button type="button" id="lpgNone">არცერთი</button>
@@ -295,6 +302,12 @@
         `;
         L.DomEvent.disableClickPropagation(div);
         this._container = div;
+
+        // hide button -> emit event so toggle chip გამოჩნდეს
+        div.querySelector('#lpgHide').addEventListener('click', ()=>{
+          this.hide();
+        });
+
         return div;
       },
       setBrands(brandList, countsByBrand, onChange) {
@@ -332,11 +345,35 @@
         list.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = brands.includes(cb.getAttribute('data-brand')));
         this._onChange && this._onChange(this.selectedBrands());
       },
-      show() { this._container.style.display = ''; },
-      hide() { this._container.style.display = 'none'; }
+      show() { this._container.style.display = ''; map.fire('lpgfilter:show'); },
+      hide() { this._container.style.display = 'none'; map.fire('lpgfilter:hide'); },
+      isHidden(){ return this._container.style.display === 'none'; }
     });
     const lpgFilter = new LpgFilterControl();
     map.addControl(lpgFilter);
+
+    // პატარა toggle-ჩიპი „⛽ ბრენდები“
+    const LpgFilterToggle = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd: function(){
+        const btn = L.DomUtil.create('button', 'search-toggle');
+        btn.style.display = 'none';
+        btn.type = 'button';
+        btn.title = 'ბრენდების ფილტრი';
+        btn.innerHTML = '⛽ ბრენდები';
+        L.DomEvent.on(btn, 'click', (e)=>{ L.DomEvent.stopPropagation(e); lpgFilter.show(); this.hide(); });
+        this._container = btn;
+        return btn;
+      },
+      show(){ this._container.style.display = ''; },
+      hide(){ this._container.style.display = 'none'; }
+    });
+    const lpgFilterToggle = new LpgFilterToggle();
+    map.addControl(lpgFilterToggle);
+
+    // toggle chip visibility sync
+    map.on('lpgfilter:hide', ()=> lpgFilterToggle.show());
+    map.on('lpgfilter:show', ()=> lpgFilterToggle.hide());
 
     // Geolocate control (მდებარეობა) — Top Left
     const Geolocate = L.Control.extend({
@@ -417,6 +454,120 @@
     const searchCtl = new SearchControl();
     map.addControl(searchCtl);
 
+    // ----------------------- DATA HOLDERS -----------------------
+    // LPG
+    let lpgReady = false;
+    let lpgClustersByBrand = {};         // full
+    let lpgCountsByBrand = {};
+    let lpgBrandList = [];
+    let lpgMarkersByKey = {};
+
+    function applyLpgSelection(){
+      if (!lpgReady) return;
+      lpgMaster.clearLayers();
+      const selected = lpgFilter.selectedBrands();
+      selected.forEach(b => { const cl = lpgClustersByBrand[b]; if (cl) lpgMaster.addLayer(cl); });
+    }
+
+    map.on('overlayadd',  e => {
+      if (e.layer === lpgMaster) {
+        if (lpgReady) {
+          applyLpgSelection();
+          // თუ მომხმარებელმა დამალა ფანჯარა, აჩვენე ჩიპი, თორემ აჩვენე თავად ფანჯარა
+          if (lpgFilter.isHidden()) { lpgFilterToggle.show(); } else { lpgFilter.show(); lpgFilterToggle.hide(); }
+        } else {
+          lpgFilter.hide(); lpgFilterToggle.hide();
+        }
+      }
+    });
+    map.on('overlayremove', e => {
+      if (e.layer === lpgMaster) { lpgMaster.clearLayers(); lpgFilter.hide(); lpgFilterToggle.hide(); }
+    });
+
+    // ----------------------- NEARBY FILTER (გამოსწორებული) -----------------------
+    let nearbyActive = false;
+    let nearbyCenter = null;
+    let nearbyCircle = null;
+    let pointsFilteredGroup = null; // cloned markers
+
+    function updateNearbyLabel(){
+      if (!nearbyCtl || !nearbyCtl._label) return;
+      nearbyCtl._label.textContent = nearbyCenter ? `ცენტრი: ${nearbyCenter.lat.toFixed(5)}, ${nearbyCenter.lng.toFixed(5)}` : 'ცენტრი: უცნობია';
+    }
+
+    async function ensureCenterFromGeolocation(){
+      if (nearbyCenter) return nearbyCenter;
+      if (meMarker) { nearbyCenter = meMarker.getLatLng(); updateNearbyLabel(); return nearbyCenter; }
+      return new Promise((resolve, reject)=>{
+        map.once('locationfound', e => { nearbyCenter = e.latlng; updateNearbyLabel(); resolve(nearbyCenter); });
+        map.once('locationerror', e => reject(e));
+        map.locate({ setView: false, enableHighAccuracy: true });
+      });
+    }
+
+    function buildPointsFiltered(center, radiusM){
+      if (!mainLayer) return null;
+      if (pointsFilteredGroup) { map.removeLayer(pointsFilteredGroup); pointsFilteredGroup = null; }
+      const grp = L.layerGroup();
+      mainLayer.eachLayer(m => {
+        if (!m.getLatLng) return;
+        const ll = m.getLatLng();
+        if (map.distance(center, ll) <= radiusM) {
+          const p  = (m.feature && m.feature.properties) || {};
+          const marker = L.marker(ll);
+          marker.feature = { properties: p };
+          marker.bindPopup(popupHtml(p, ll));
+          grp.addLayer(marker);
+        }
+      });
+      pointsFilteredGroup = grp;
+      return grp;
+    }
+
+    //თვისებადი: Nearby შემთხვევაში LPG-ზე უბრალოდ flyTo, რადგან კლასტერში კოპირებულია მარკერები
+    function buildLpgFiltered(center, radiusM){
+      // ამ ვერსიაში Nearby მხოლოდ points-ს ფილტრავს; LPG-ს არ ვკლონავთ — გაქცევას ავარიდეთ
+      // თუ გინდა LPG-მაც გაიფილტროს, შემატყობინე — დავამატებ clone-კლასტერს.
+    }
+
+    function applyNearby(center, radiusKm){
+      const radiusM = radiusKm * 1000;
+
+      if (!nearbyCircle) {
+        nearbyCircle = L.circle(center, { radius: radiusM, color: '#86aefb', weight: 2, fillColor: '#86aefb', fillOpacity: 0.08 }).addTo(map);
+      } else {
+        nearbyCircle.setLatLng(center).setRadius(radiusM);
+      }
+
+      const filtered = buildPointsFiltered(center, radiusM);
+      if (map.hasLayer(mainLayer)) { map.removeLayer(mainLayer); if (filtered) filtered.addTo(map); }
+
+      nearbyActive = true;
+    }
+
+    function clearNearby(){
+      nearbyActive = false;
+      if (nearbyCircle) { map.removeLayer(nearbyCircle); nearbyCircle = null; }
+      if (pointsFilteredGroup && map.hasLayer(pointsFilteredGroup)) {
+        map.removeLayer(pointsFilteredGroup);
+        if (mainLayer) map.addLayer(mainLayer);
+      }
+      pointsFilteredGroup = null;
+    }
+
+    // overlay toggle swap for points
+    map.on('overlayadd', e => {
+      if (mainLayer && e.layer === mainLayer && nearbyActive && pointsFilteredGroup) {
+        map.removeLayer(mainLayer);
+        pointsFilteredGroup.addTo(map);
+      }
+    });
+    map.on('overlayremove', e => {
+      if (pointsFilteredGroup && e.layer === mainLayer) {
+        if (map.hasLayer(pointsFilteredGroup)) map.removeLayer(pointsFilteredGroup);
+      }
+    });
+
     // --- Nearby კონტროლი: bottomleft + ჩაკეცვადი (►/▼) ---
     const NearbyControl = L.Control.extend({
       options: { position: 'bottomleft' },
@@ -453,6 +604,7 @@
           arrow.textContent  = open ? '►' : '▼';
         });
 
+        // refs
         this._panel = body;
         this._num   = body.querySelector('#nbNum');
         this._rng   = body.querySelector('#nbRange');
@@ -461,8 +613,25 @@
         this._apply = body.querySelector('#nbApply');
         this._clear = body.querySelector('#nbClear');
 
+        // range<->number sync
         this._rng.addEventListener('input', ()=> this._num.value = this._rng.value);
         this._num.addEventListener('input', ()=> this._rng.value = this._num.value);
+
+        // bind buttons HERE (უფრო საიმედოა)
+        this._locBtn.addEventListener('click', async ()=>{
+          try {
+            await ensureCenterFromGeolocation();
+            map.flyTo(nearbyCenter, Math.max(map.getZoom(), 12), { duration: 0.6 });
+          } catch(err){ alert('ლოკაციის მიღება ვერ მოხერხდა: ' + (err.message||err)); }
+        });
+        this._apply.addEventListener('click', async ()=>{
+          try {
+            await ensureCenterFromGeolocation();
+            const km = Math.max(1, Math.min(100, parseInt(this._num.value || '5', 10)));
+            applyNearby(nearbyCenter, km);
+          } catch(err){ alert('გთხოვ, მიეცი წვდომა მდებარეობაზე.'); }
+        });
+        this._clear.addEventListener('click', ()=> { clearNearby(); });
 
         return div;
       }
@@ -470,7 +639,7 @@
     const nearbyCtl = new NearbyControl();
     map.addControl(nearbyCtl);
 
-    // ----------------------- DATA & INDEXES -----------------------
+    // ----------------------- SEARCH -----------------------
     let pointsMarkerByKey = {};
     let fuse = null;
     let rawIndex = [];
@@ -502,7 +671,6 @@
       searchCtl.bindInput();
     }
 
-    // ----------------------- GO TO HELPERS -----------------------
     function goToPointByKey(key, ll){
       if (mainLayer && !map.hasLayer(mainLayer)) map.addLayer(mainLayer);
       map.flyTo(ll, 16, { duration: 0.8 });
@@ -512,10 +680,15 @@
 
     function goToLpgByKey(key, ll, brandLabel){
       if (!map.hasLayer(lpgMaster)) map.addLayer(lpgMaster);
-      lpgFilter.setChecked([brandLabel]); // ხაზზე დატოვე მხოლოდ ეს ბრენდი
+      lpgFilter.setChecked([brandLabel]);
       applyLpgSelection();
+      if (nearbyActive) {
+        // Nearby ფილტრის დროს უბრალოდ გადავფრინდეთ კოორდინატზე
+        map.flyTo(ll, 16, { duration: 0.6 });
+        return;
+      }
       const rec = lpgMarkersByKey[key];
-      const cluster = (nearbyActive ? lpgFilteredClustersByBrand : lpgClustersByBrand)[brandLabel];
+      const cluster = lpgClustersByBrand[brandLabel];
       if (rec && cluster) {
         cluster.zoomToShowLayer(rec.marker, () => {
           map.flyTo(ll, 16, { duration: 0.6 });
@@ -526,157 +699,10 @@
       }
     }
 
-    // ----------------------- LPG DATA HOLDERS -----------------------
-    let lpgReady = false;
-    let lpgClustersByBrand = {};         // full
-    let lpgCountsByBrand = {};
-    let lpgBrandList = [];
-    let lpgMarkersByKey = {};
-    let lpgFilteredClustersByBrand = {}; // nearby
-
-    function applyLpgSelection(){
-      if (!lpgReady) return;
-      lpgMaster.clearLayers();
-      const source = nearbyActive ? lpgFilteredClustersByBrand : lpgClustersByBrand;
-      const selected = lpgFilter.selectedBrands();
-      selected.forEach(b => {
-        const cl = source[b];
-        if (cl) lpgMaster.addLayer(cl);
-      });
-    }
-
-    map.on('overlayadd',  e => { if (e.layer === lpgMaster) { if (lpgReady) { applyLpgSelection(); lpgFilter.show(); } else { lpgFilter.hide(); } } });
-    map.on('overlayremove', e => { if (e.layer === lpgMaster) { lpgMaster.clearLayers(); lpgFilter.hide(); } });
-
-    // ----------------------- NEARBY FILTER -----------------------
-    let nearbyActive = false;
-    let nearbyCenter = null;
-    let nearbyCircle = null;
-    let pointsFilteredGroup = null; // cloned markers
-
-    function updateNearbyLabel(){
-      if (!nearbyCtl._label) return;
-      nearbyCtl._label.textContent = nearbyCenter ? `ცენტრი: ${nearbyCenter.lat.toFixed(5)}, ${nearbyCenter.lng.toFixed(5)}` : 'ცენტრი: უცნობია';
-    }
-
-    function ensureCenterFromGeolocation(){
-      return new Promise((resolve, reject)=>{
-        if (nearbyCenter) return resolve(nearbyCenter);
-        if (meMarker) { nearbyCenter = meMarker.getLatLng(); updateNearbyLabel(); return resolve(nearbyCenter); }
-        map.once('locationfound', e => { nearbyCenter = e.latlng; updateNearbyLabel(); resolve(nearbyCenter); });
-        map.once('locationerror', e => reject(e));
-        map.locate({ setView: false, enableHighAccuracy: true });
-      });
-    }
-
-    function buildPointsFiltered(center, radiusM){
-      if (!mainLayer) return null;
-      if (pointsFilteredGroup) { map.removeLayer(pointsFilteredGroup); pointsFilteredGroup = null; }
-      const grp = L.layerGroup();
-      mainLayer.eachLayer(m => {
-        if (!m.getLatLng) return;
-        const ll = m.getLatLng();
-        if (map.distance(center, ll) <= radiusM) {
-          const p  = (m.feature && m.feature.properties) || {};
-          const marker = L.marker(ll);
-          marker.feature = { properties: p };
-          marker.bindPopup(popupHtml(p, ll));
-          grp.addLayer(marker);
-        }
-      });
-      pointsFilteredGroup = grp;
-      return grp;
-    }
-
-    function buildLpgFiltered(center, radiusM){
-      const out = {};
-      lpgBrandList.forEach(b => { out[b] = L.markerClusterGroup({ disableClusteringAtZoom: 15 }); });
-      Object.entries(lpgMarkersByKey).forEach(([k, rec])=>{
-        const ll = rec.marker.getLatLng();
-        if (map.distance(center, ll) <= radiusM) {
-          const m = L.marker(ll, { icon: gasIcon });
-          const p = rec.marker.feature ? rec.marker.feature.properties : {};
-          m.feature = { properties: p };
-          m.bindPopup(popupHtml(p, ll));
-          out[rec.brand].addLayer(m);
-        }
-      });
-      lpgFilteredClustersByBrand = out;
-    }
-
-    function applyNearby(center, radiusKm){
-      const radiusM = radiusKm * 1000;
-
-      // circle
-      if (!nearbyCircle) {
-        nearbyCircle = L.circle(center, { radius: radiusM, color: '#86aefb', weight: 2, fillColor: '#86aefb', fillOpacity: 0.08 });
-        nearbyCircle.addTo(map);
-      } else {
-        nearbyCircle.setLatLng(center).setRadius(radiusM);
-      }
-
-      // points
-      const filtered = buildPointsFiltered(center, radiusM);
-      if (map.hasLayer(mainLayer)) { map.removeLayer(mainLayer); if (filtered) filtered.addTo(map); }
-
-      // LPG
-      buildLpgFiltered(center, radiusM);
-      if (map.hasLayer(lpgMaster)) applyLpgSelection();
-
-      nearbyActive = true;
-    }
-
-    function clearNearby(){
-      nearbyActive = false;
-      if (nearbyCircle) { map.removeLayer(nearbyCircle); nearbyCircle = null; }
-      if (pointsFilteredGroup && map.hasLayer(pointsFilteredGroup)) {
-        map.removeLayer(pointsFilteredGroup);
-        if (mainLayer) map.addLayer(mainLayer);
-      }
-      pointsFilteredGroup = null;
-      if (map.hasLayer(lpgMaster)) applyLpgSelection();
-    }
-
-    // overlay toggle swap for points
-    map.on('overlayadd', e => {
-      if (mainLayer && e.layer === mainLayer && nearbyActive && pointsFilteredGroup) {
-        map.removeLayer(mainLayer);
-        pointsFilteredGroup.addTo(map);
-      }
-    });
-    map.on('overlayremove', e => {
-      if (pointsFilteredGroup && e.layer === mainLayer) {
-        if (map.hasLayer(pointsFilteredGroup)) map.removeLayer(pointsFilteredGroup);
-      }
-    });
-
-    // hook Nearby buttons
-    (function wireNearby(){
-      const c = nearbyCtl;
-      c._locBtn.addEventListener('click', async ()=>{
-        try {
-          await ensureCenterFromGeolocation();
-          map.flyTo(nearbyCenter, Math.max(map.getZoom(), 12), { duration: 0.6 });
-        } catch(err){ alert('ლოკაციის მიღება ვერ მოხერხდა: ' + (err.message||err)); }
-      });
-      c._apply.addEventListener('click', async ()=>{
-        try {
-          await ensureCenterFromGeolocation();
-          const km = Math.max(1, Math.min(100, parseInt(c._num.value || '5', 10)));
-          applyNearby(nearbyCenter, km);
-        } catch(err){ alert('ჯერ ნებადაცვითი ლოკაციაა საჭირო.'); }
-      });
-      c._clear.addEventListener('click', ()=> { clearNearby(); });
-    })();
-
     // ----------------------- LOAD DATA -----------------------
-    // search holders
     let lpgMarkersReadyForSearch = false;
 
-    function addToSearchFromPoints(){
-      rawIndex = rawIndex.concat(buildPointsIndex(mainLayer));
-    }
-
+    function addToSearchFromPoints(){ rawIndex = rawIndex.concat(buildPointsIndex(mainLayer)); }
     function addToSearchFromLpg(){
       Object.entries(lpgMarkersByKey).forEach(([k, v]) => {
         const m = v.marker;
@@ -692,11 +718,8 @@
     function readySearch(){
       rebuildFuse();
       searchCtl.setSelect((item) => {
-        if (item.source === 'points') {
-          goToPointByKey(item.key, item.latlng);
-        } else {
-          goToLpgByKey(item.key, item.latlng, item.brandLabel);
-        }
+        if (item.source === 'points') { goToPointByKey(item.key, item.latlng); }
+        else { goToLpgByKey(item.key, item.latlng, item.brandLabel); }
       });
     }
 
@@ -731,6 +754,7 @@
       } catch (e) {
         console.warn('LPG.geojson ვერ ჩაიტვირთა:', e);
         lpgFilter.hide();
+        lpgFilterToggle.hide();
       }
 
       readySearch();
